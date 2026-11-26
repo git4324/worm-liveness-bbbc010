@@ -1,39 +1,55 @@
-# Can simple image features distinguish BBBC010 treatment groups?
+# Can a computer tell which worm wells got ampicillin?
 
-On this plate, logistic regression and a random forest both distinguished the treatment groups with 100% held-out-well accuracy. A small convolutional neural network (CNN) reached 99.3%. A control using pixels outside the wells reached 95%, showing that the images contain a strong group signal without visible worms.
+My question was whether simple measurements of worm shape and brightness could tell which wells got ampicillin. I also wanted to see how those measurements compared with a small neural network trained on the images. The feature models reached 100% accuracy on held-out wells, but the background alone reached 95%. That result made me look more carefully at what the models could be picking up.
 
-## Data
+## How AI was used
 
-BBBC010, contributed by Fred Ausubel to the Broad Bioimage Benchmark Collection, contains control wells from one 384-well plate and is released under CC0. The v2 image ZIP contains 200 usable TIFFs, two per well at 696 × 520 pixels in 16-bit files. Five additional TIFF-named entries are macOS bookkeeping. The mask ZIPs contain 100 corrected foreground masks and 1,407 individual outlines. The analysis scores the corrected foreground masks. [BBBC010 and the official archives](https://bbbc.broadinstitute.org/BBBC010) · [Ljosa et al., 2012](https://doi.org/10.1038/nmeth.2083)
+I used **OpenAI Codex** to help turn my research question into a Python project. Codex wrote and ran the analysis code, generated the figures and result tables, and helped draft and revise the write-up. The three classifiers described below were fitted on the BBBC010 data. Codex was the coding and writing assistant.
 
-The filename tokens `_<well>_w1_` and `_<well>_w2_` match the well in `<well>_binary.png`. All 199 TIFF stage labels that were present matched their filenames. The digits in the well token give the plate column. Columns 1–12 are the 52 ampicillin-treated wells (mostly live worms). Columns 13–24 are the 48 untreated wells (mostly dead worms). These are **treatment-level labels**. A well can contain a mixture of live and dead worms, and individual viability is unverified.
+## What was in the images?
 
-The dataset page describes channel 1 as brightfield and channel 2 as GFP, while all 100 `w1` TIFFs carry a TRITC fluorescence tag and 99 `w2` TIFFs carry a transmitted-light tag. The remaining `w2` file (A24) lacks the acquisition tag and was paired by filename. This project uses `w2` as brightfield and reports `w1` intensity as TRITC fluorescence. [Dataset page](https://bbbc.broadinstitute.org/BBBC010)
+The BBBC010 collection includes 100 wells from one 384-well plate. The image ZIP has two 16-bit TIFFs per well at 696 × 520 pixels, plus five macOS metadata files with TIFF filenames. The mask ZIPs contain 100 corrected foreground masks and 1,407 outlines of individual worms. Fred Ausubel contributed the dataset, and BBBC released it under CC0. [BBBC010 collection](https://bbbc.broadinstitute.org/BBBC010) · [Original BBBC paper](https://doi.org/10.1038/nmeth.2083)
 
-## Methods and segmentation results
+A well ID like `A13` appears in both image filenames and in the mask name `A13_binary.png`. All 199 available TIFF stage labels agreed with the filenames. Columns 1–12 gave 52 ampicillin-treated wells, which mostly contain live worms. Columns 13–24 gave 48 untreated wells, which mostly contain dead worms. These are **treatment labels for whole wells**. The viability of each individual worm is unknown.
 
-The display shows six wells picked with a fixed seed. The treated examples contain many curved outlines. Rod-like outlines are more common in the untreated examples, although some straight worms appear in treated wells as well. These are still images, so they show posture at one instant. Display contrast is scaled independently for each panel.
+There was one detail worth checking before using the images. The dataset page lists brightfield and GFP, but the TIFF tags in the v2 download identify all 100 `w1` images as TRITC fluorescence and 99 `w2` images as transmitted light. The remaining `w2` file, from A24, lacks the tag and was paired by filename. The analysis uses `w2` for brightfield and calls the other channel TRITC. [Dataset page](https://bbbc.broadinstitute.org/BBBC010)
 
-![Six wells shown in brightfield and TRITC](outputs/figures/examples.png)
+In the six randomly selected wells below, many treated worms look curved. Straight, rod-like shapes are more common in the untreated examples. Some treated worms look straight too. Each picture shows one moment, so scoring movement would take a series of images. Contrast was adjusted separately for each panel to make shapes easier to see.
 
-The segmentation smooths each brightfield image, estimates the slowly varying background, trims the well rim, thresholds locally dark pixels with Otsu's method, closes gaps, fills holes and removes small connected regions. The human-corrected masks enter the scoring step. The baseline does not split touching worms.
+![Six example wells in brightfield and TRITC](outputs/figures/examples.png)
+
+## Finding worm pixels
+
+The segmentation script smooths the brightfield image and estimates its background. It trims the well rim, then uses Otsu's method to pick out pixels darker than their surroundings. It closes small gaps, fills holes and removes isolated specks. Each predicted mask was scored against the corrected foreground mask for that well.
 
 | Pixel overlap across 100 wells | Mean ± SD | Min–max |
 | --- | ---: | ---: |
 | Dice | 0.720 ± 0.107 | 0.299–0.876 |
 | Intersection over union (IoU) | 0.573 ± 0.123 | 0.176–0.780 |
 
-The lowest-Dice examples miss several worms along the rim. Mean Dice was 0.775 for treated wells and 0.661 for untreated wells, so segmentation quality itself could contribute to differences in measured features. Wählby et al. reported 81% and 94% of individual worms segmented correctly after untangling, at an individual-worm F-factor threshold of 0.8. Those figures use a different unit and scoring rule from mean well-level pixel overlap. [Wählby et al., 2012, Evaluation of worm detection](https://pmc.ncbi.nlm.nih.gov/articles/PMC3433711/#S10)
+In the lowest-scoring overlays, several worms near the rim are missing. Mean Dice was 0.775 for treated wells and 0.661 for untreated wells. Because the two groups were segmented with different success, some of the differences in the measured features could come from the masks. The published 81% and 94% from Wählby and colleagues count individual worms that passed an F-factor threshold of 0.8 after untangling. The scores here measure foreground pixel overlap for whole wells. [Published worm-detection evaluation](https://pmc.ncbi.nlm.nih.gov/articles/PMC3433711/#S10)
 
 ![Three highest and three lowest Dice overlays](outputs/figures/segmentation_overlays.png)
 
-The feature models get one row per well. It contains region count and the median region area, perimeter, major and minor axis lengths, eccentricity, solidity, elongation (major axis divided by minor axis) and mean TRITC intensity inside each segmented region. The CNN learns from both full images resized to 96 × 128 pixels with per-image contrast scaling. It has 5,177 trainable parameters and trains for 16 epochs on CPU.
+## What was trained?
 
-![Feature distributions by treatment group](outputs/figures/feature_distributions.png)
+Each model learned the same task. Given a new well's image measurements or pixels, predict whether the well was treated with ampicillin or left untreated.
 
-## Classification results
+| Model | What it learned from |
+| --- | --- |
+| Logistic regression (scikit-learn) | One row of nine measurements per well. The model learned how to weight the scaled measurements to score the treatment group. |
+| Random forest (scikit-learn) | The same nine measurements. The forest learned 150 decision trees and combined their predictions. |
+| Small convolutional neural network (PyTorch) | Both full images for each well, contrast-scaled separately and resized to 96 × 128 pixels. It started from random weights in each fold and trained for 16 epochs on CPU, updating 5,177 parameters. |
 
-All three models used the same three repeats of stratified five-fold cross-validation (80 training wells and 20 test wells per fold). The feature pipelines fit imputation and scaling where applicable on the training wells. Reported uncertainty is the standard deviation across the 15 folds, which reuse wells across repeats. The confusion matrices sum all 300 out-of-fold predictions. Untreated comes first in both rows (actual) and columns (predicted).
+The feature row holds a region count and eight medians across segmented regions. These summarize area, perimeter, major and minor axis lengths, eccentricity, solidity, elongation (long axis divided by short axis), and mean TRITC intensity inside each region. A region can be a single worm, a fragment or several touching worms.
+
+![Distributions of region measurements by treatment group](outputs/figures/feature_distributions.png)
+
+## How well did the models do?
+
+I wanted the three models to get the same test. All three used the same three rounds of five-fold cross-validation, with 80 training wells and 20 test wells per fold and new groupings each round. Both pictures and all measurements for a given well stayed together. The feature models estimated missing-value replacements and scaling values, where applicable, using their training wells.
+
+The ± values show the standard deviation (SD) across 15 folds. The confusion matrices total 300 test predictions because each well is tested once per repeat. Rows show the actual group and columns show the predicted group, with untreated first.
 
 | Model | Accuracy ± SD | Balanced accuracy ± SD | ROC AUC ± SD | Confusion matrix |
 | --- | ---: | ---: | ---: | --- |
@@ -41,20 +57,20 @@ All three models used the same three repeats of stratified five-fold cross-valid
 | Random forest | 100.0% ± 0.0 pp | 100.0% ± 0.0 pp | 1.000 ± 0.000 | `[[144, 0], [0, 156]]` |
 | Small CNN | 99.3% ± 1.8 pp | 99.4% ± 1.7 pp | 1.000 ± 0.000 | `[[144, 0], [2, 154]]` |
 
-The CNN ranked every treated well above every untreated well within each fold. At a probability cutoff of 0.5 it called two treated wells untreated across the three repeats, so its accuracy was slightly lower than the feature models'.
+The CNN ranked the treated wells above the untreated wells in every fold. Two treated predictions still fell below the 0.5 cutoff, which brought its accuracy down to 99.3%.
 
-Shuffling one feature at a time on the held-out wells produced small average AUC drops. The largest reported drop for logistic regression was 0.008 for fluorescence intensity. The forest's largest was 0.002 for elongation, the length-to-width ratio of the fitted ellipse. Segmented regions had higher median elongation in untreated wells (12.485 versus 4.058). Several related measurements encode similar information, so the small drops give limited evidence about which feature matters most. [Per-fold permutation importance](outputs/feature_importance.csv)
+To see which measurements mattered, the script shuffled one feature at a time among the test wells and checked how much AUC dropped. Fluorescence caused the largest average drop for logistic regression (0.008). Elongation caused the largest drop for the random forest (0.002). In the segmented images, the median of the per-well elongation values was 12.485 for untreated wells and 4.058 for treated wells. The AUC drops were small, and related measurements can carry similar information. [Feature importance results](outputs/feature_importance.csv)
 
-### Artifact checks
+## Could the models be taking a shortcut?
 
-- The model inputs exclude filenames, plate coordinates and TIFF metadata. Both channels from one well always stay together. Pixel hashing found zero exact duplicates across wells within either channel.
-- Logistic regression on region geometry and count alone reached 99% accuracy. Using only the fluorescence intensity feature reached 100%.
-- Logistic regression on the median and standard deviation of pixels in the outer 64 columns on each side reached 95% accuracy (ROC AUC 0.983). This control used both channels and sampled outside the visible wells. The 100 corrected masks had no marked foreground in those strips. Background brightness or noise is associated with treatment group on this plate.
-- Holding out all sampled wells from test columns together still gave 100% accuracy for logistic regression on all features. Every held-out column still comes from the same plate, where column and treatment are linked. [Artifact check scores](outputs/artifact_checks.csv)
+- Filenames, plate coordinates and TIFF tags were left out of the model inputs. A pixel-by-pixel hash check found zero exact duplicates across wells within either channel.
+- Logistic regression reached 99% using region geometry and count alone and 100% using the fluorescence intensity feature alone.
+- The biggest surprise was the background check. Logistic regression reached 95% accuracy (ROC AUC 0.983) using only median brightness and pixel variation from the outer 64 columns on each side of both images. None of the 100 corrected masks marks foreground in those strips.
+- Logistic regression on all nine features still reached 100% when whole plate columns were held out together. Those test columns came from the same plate, where column position determines treatment. [Full shortcut-check results](outputs/artifact_checks.csv)
 
-## Training-label flips
+## What happens when some training labels are wrong?
 
-Each fold reused the same test wells and original test labels. A seeded permutation selected exactly 0, 8, 16 or 24 of the 80 training labels to flip. Both models got the same flips and the CNN reused its initialization seed across rates within a fold.
+The next test flipped the recorded treatment for 0, 8, 16 or 24 of the 80 training wells in each fold. Logistic regression and the CNN saw the same flips, and the CNN reused its starting seed across noise levels in a fold. The test wells kept their original treatment labels.
 
 | Training labels flipped | Logistic accuracy ± SD | CNN accuracy ± SD |
 | --- | ---: | ---: |
@@ -63,13 +79,13 @@ Each fold reused the same test wells and original test labels. A seeded permutat
 | 20% | 97.0% ± 4.6 pp | 96.7% ± 4.5 pp |
 | 30% | 91.3% ± 8.1 pp | 95.7% ± 5.0 pp |
 
-Both models lost accuracy under random training-label errors, and the CNN lost less at 30% in this experiment. The flips test sensitivity to incorrect treatment labels and cannot estimate the biological mixture of live and dead worms within either group.
+Both models lost accuracy as more labels were flipped. The CNN lost less at 30% in this experiment. Flipping treatment labels tests how the models handle mistakes in the training table. It leaves the real mix of live and dead worms in each well unknown.
 
-![Model accuracy as training treatment labels are flipped](outputs/figures/label_noise.png)
+![Accuracy as more training treatment labels are flipped](outputs/figures/label_noise.png)
 
 ## Reproduce
 
-Run from the repository root with Python 3.14. The analysis uses pinned direct dependencies and fixed seeds. It ran on an Apple Silicon Mac with Python 3.14.5. A different OS or CPU may give small numerical differences.
+Open Terminal in the project folder and run these commands with Python 3.14. The project uses pinned direct dependencies and fixed seeds. The reported results came from an Apple Silicon Mac running Python 3.14.5. Other computers may give small numerical differences.
 
 ```sh
 python3.14 -m venv .venv
@@ -85,7 +101,7 @@ python scripts/05_cnn.py
 python scripts/06_noise.py
 ```
 
-The exploration script prints filename and TIFF-tag evidence and writes `data/labels.csv`. Segmentation and model scripts print their scores and save the underlying per-well or per-fold CSVs in `outputs/`. The plots regenerate in `outputs/figures/`. To reproduce the corrected-mask check for the artifact strips, run the following after downloading the data.
+The scripts print the results as they run. You'll find labels in `data/labels.csv`, score tables in `outputs/`, and plots in `outputs/figures/`. After the download, you can run this check to count how many corrected masks mark worm pixels in the strips used for the background test.
 
 ```sh
 PYTHONPATH=scripts python - <<'PY'
@@ -100,10 +116,10 @@ print(affected)
 PY
 ```
 
-## Limits
+## What I can conclude
 
-1. **Treatment and plate position are inseparable here.** All 100 wells are from one plate, with treatment determined by column and a strong outside-well signal. The 20-well test folds estimate performance on this plate. Zero spread for some metrics gives no estimate of performance on a new plate.
-2. **Individual viability is unknown.** Treatment-level labels can group both live and dead worms in the same well. The scores measure agreement with the recorded treatment, and the synthetic flips do not measure biological label noise.
-3. **Simple masks miss and merge worms.** Errors vary by group and are visible near the rim. Region counts are approximate. The published instance-untangling benchmark and this pixel-overlap experiment support no claim of a benchmark improvement.
+1. **These models separated the treatment groups on one plate.** The background result and the column layout make an independent plate important for finding out how well the models generalize.
+2. **The data support a well-level treatment prediction.** A single well can contain both live and dead worms, and individual viability is unknown.
+3. **The masks affect what the feature models see.** Worms near the rim can go missing, and touching worms can produce one region. The published worm-by-worm segmentation scores use a different measure from this project's pixel-overlap scores.
 
 [Beginner explainer](docs/EXPLAINER.md) · [Application notes](docs/APPLICATION_NOTES.md)
