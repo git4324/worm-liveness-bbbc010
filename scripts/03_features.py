@@ -16,12 +16,12 @@ REGION_PROPERTIES = {
     "minor_axis": "axis_minor_length",
     "eccentricity": "eccentricity",
     "solidity": "solidity",
-    "mean_gfp": "intensity_mean",
+    "mean_fluorescence": "intensity_mean",
 }
 
 
-def well_features(mask, gfp):
-    regions = regionprops(label(mask), intensity_image=gfp)
+def well_features(mask, fluorescence):
+    regions = regionprops(label(mask), intensity_image=fluorescence)
     measurements = []
     for region in regions:
         values = {name: getattr(region, attr) for name, attr in REGION_PROPERTIES.items()}
@@ -49,8 +49,8 @@ def plot_distributions(table):
 def main():
     FIG.mkdir(parents=True, exist_ok=True)
     rows = []
-    for row, bf, gfp, _ in image_pairs():
-        features = well_features(segment(read_image(bf)), read_image(gfp))
+    for row, bf, fluorescence, _ in image_pairs():
+        features = well_features(segment(read_image(bf)), read_image(fluorescence))
         rows.append(dict(well=row.well, group=row.group, **features))
     table = pd.DataFrame(rows)
     table.to_csv(OUT / "features.csv", index=False)

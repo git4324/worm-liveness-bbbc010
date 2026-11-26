@@ -1,19 +1,20 @@
-"""A fixed, explainable brightfield foreground baseline."""
+"""A fixed, explainable transmitted-light foreground baseline."""
 from scipy import ndimage as ndi
 from skimage.filters import threshold_otsu
-from skimage.measure import label
-from skimage.morphology import binary_closing, disk, remove_small_objects
+from skimage.morphology import closing, disk, remove_small_objects
 
 
 def segment(image):
-    # Compare a lightly smoothed pixel to its surroundings to reduce shading.
+    # Mask out the black surround and trim the sharp rim before thresholding.
     smooth = ndi.gaussian_filter(image.astype("float32"), sigma=1)
     background = ndi.gaussian_filter(smooth, sigma=12)
+    inside = background > threshold_otsu(background)
+    inside = ndi.binary_erosion(inside, structure=disk(10))
     darkness = background - smooth
-    foreground = darkness > threshold_otsu(darkness)
-    foreground = binary_closing(foreground, disk(3))
-    foreground = ndi.binary_fill_holes(foreground)
-    return remove_small_objects(label(foreground), max_size=79) > 0
+    foreground = inside & (darkness > threshold_otsu(darkness[inside]))
+    foreground = closing(foreground, disk(3))
+    foreground = ndi.binary_fill_holes(foreground) & inside
+    return remove_small_objects(foreground, max_size=79)
 
 
 def overlap(predicted, reference):

@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from PIL import Image
-from tifffile import imread
+from tifffile import TiffFile, imread
 
 DATA = Path("data")
 OUT = Path("outputs")
@@ -35,9 +35,9 @@ def image_pairs():
     images, masks = inventory()
     by_name = {path.name: path for path in images}
     by_well = {path.name.split("_")[0]: path for path in masks}
-    gfp = {path.name.split("_")[6]: path for path in images if "_w2_" in path.name}
+    fluorescence = {path.name.split("_")[6]: path for path in images if "_w1_" in path.name}
     for row in labels().itertuples(index=False):
-        yield row, by_name[row.filename], gfp[row.well], by_well[row.well]
+        yield row, by_name[row.filename], fluorescence[row.well], by_well[row.well]
 
 
 def read_mask(path):
@@ -52,3 +52,12 @@ def read_image(path):
 def display_range(image):
     return dict(zip(("vmin", "vmax"), np.percentile(image, [1, 99])))
 
+
+
+def illumination(path):
+    with TiffFile(path) as tif:
+        tag = tif.pages[0].tags.get("UIC1tag")
+        if tag is None:
+            return None, "missing", None
+        metadata = tag.value
+    return metadata["StageLabel"][0], metadata["Name"], metadata["wavelength"]
