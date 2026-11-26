@@ -1,101 +1,89 @@
-# How the worm image project works
+# Can Simple Measurements Tell Treated Worm Wells from Untreated Ones?
 
-The question was simple. Can two pictures of a well tell us whether it got ampicillin? The answer on this plate was yes, but the background also gave away a lot. The labels came from plate columns and tell us which treatment each well received. Treated wells mostly contained live worms, and untreated wells mostly contained dead worms. Each well could contain a mix, and the data leave individual worm viability unknown.
+*A computational image-analysis project using the BBBC010 C. elegans dataset*
 
-OpenAI Codex helped write and run the Python code, make the plots and draft the explanations. The models actually trained in the experiment were logistic regression, a random forest and a small convolutional neural network (CNN).
+## Why I started this
 
-## 0. Save a version with Git
+My school experiment on C. elegans taught me how to run an experiment and test it with statistics, but it also showed me how much of biology depends on what you can measure from images. I wanted to learn how researchers turn a microscope picture into numbers a computer can work with. So in November 2026 I started this project to teach myself image analysis in Python. I'm still a beginner, and I used an AI coding assistant to help me write and debug code, but I chose the question, read the results, and wrote up what they mean and what they don't.
 
-A commit is a saved version of the code, write-up and results. The project lives on the `main` branch. Anyone who downloads it can use the first script to get the original data from BBBC.
+## The question
 
-1. What does a commit save?
-2. Why is the `data/` folder ignored by Git?
-3. What happens when you push a commit?
+Can simple, explainable measurements of worm shape and fluorescence separate wells treated with the antibiotic ampicillin from untreated wells? And how does that compare with a small neural network that learns straight from the pixels?
 
-## 1. Figure out which files go together
+## The data
 
-`00_download.py` fetches the three ZIP files. `01_explore.py` checks the image files, matches them with the masks, and writes a label sheet called `data/labels.csv`. For example, both A01 images belong with `A01_binary.png`. The number in the well ID gives its column, which determines its treatment group.
+I used BBBC010, a public collection from the Broad Bioimage Benchmark Collection, contributed by Fred Ausubel and released under CC0, which means anyone can use it freely. It has 100 wells from one 384-well plate. For each well there are two 16-bit TIFF images at 696 × 520 pixels. The mask files hold 100 corrected foreground masks, which are human-drawn outlines of where the worms are, plus 1,407 outlines of individual worms.
 
-The image tags settle a detail the website describes differently. In the downloaded data, `w2` is transmitted light and `w1` is TRITC fluorescence. One `w2` image had no tag, so its filename was used to pair it.
+Each filename carries a well ID like A13, and the matching mask is named A13_binary.png. All 199 TIFF stage labels I could check agreed with the filenames. Columns 1–12 gave 52 ampicillin-treated wells, which mostly contain live worms. Columns 13–24 gave 48 untreated wells, which mostly contain dead worms.
 
-1. Which files belong to A13, and which group is it in?
-2. How do you know which channel is which?
-3. What does the A13 label tell you about an individual worm in that well?
+This is the most important limit of the whole project: these are treatment labels for entire wells, not labels for individual worms. A single well can hold both live and dead worms, and I don't know the true health of any individual worm.
 
-## 2. Look at the images
+## A detail I checked before trusting the images
 
-`01_examples.py` picks three wells from each group using a fixed random seed, so the examples are the same whenever the script runs. In the figure, many worms in treated wells bend or curl. More worms in the untreated wells look straight. The figure adjusts contrast for each picture separately, so compare measured intensity in the feature table.
+The dataset page says the channels are brightfield and GFP. But the TIFF metadata tags in the version 2 download identify all 100 "w1" images as TRITC fluorescence, and 99 of the "w2" images as transmitted light (ordinary brightfield). The last w2 file, from well A24, has no tag, so I paired it by filename. I used w2 as my brightfield image and called the other channel TRITC. I checked this because a project that mislabels its own channels can't be trusted, and I'd rather catch a mismatch early than build on it.
 
-1. Why look at the pictures before writing the analysis?
-2. What shape difference can you see in the examples?
-3. What would you need to see whether a worm moved?
+## What I saw by eye
 
-## 3. Mark the pixels that look like worms
+In six randomly chosen wells, many treated worms look curved, while straight, rod-like shapes were more common in the untreated wells. Some treated worms look straight too, so shape alone isn't a clean rule. Each picture also freezes a single moment, so measuring movement would need a series of images over time. I adjusted the contrast separately for each panel so shapes are easier to see, which means brightness shouldn't be compared across panels.
 
-`02_segment.py` uses `segmentation.py` to smooth the brightfield picture and estimate its background. It trims the rim and looks for pixels that are darker than their surroundings. Otsu's method picks the cutoff from the image values. A few cleanup steps connect short gaps, fill holes and remove tiny regions.
+## What I trained, in plain language
 
-The script compares the predicted mask with the corrected mask. Dice averaged 0.720 and IoU averaged 0.573. Both numbers measure overlap and reach 1 when the masks agree exactly. In the low-scoring overlays, you can see worms that the script missed near the edge.
+I trained three models on the same task: given a new well's image measurements or pixels, predict whether it was treated with ampicillin or left untreated.
 
-1. What problem does estimating the background help with?
-2. What do Dice and IoU compare?
-3. Why are the 81% and 94% from the published paper a separate result?
+**Logistic regression** is one of the simplest models in machine learning. It gives each measurement a weight, adds them up, and turns the total into a probability of "treated." It learned these weights from one row of nine measurements per well: the number of segmented regions, plus the median of eight region features. Those features are area, perimeter, major and minor axis length (how long and how wide a fitted ellipse is), eccentricity (how stretched out the shape is), solidity (how filled-in versus ragged it is), elongation (long axis divided by short axis), and mean TRITC fluorescence intensity inside each region. I used scikit-learn, a widely used Python library that includes standard models like this one. A "region" can be a single worm, a fragment of one, or several touching worms, which is a real weakness of my segmentation.
 
-## 4. Describe the regions with numbers
+**A random forest** builds many decision trees, each asking a series of yes/no questions about the measurements, and combines their votes. Mine used 150 trees on the same nine measurements. Forests can pick up more complicated patterns than logistic regression, but they are harder to explain.
 
-`03_features.py` uses `regionprops` to measure each connected region. For example, the major and minor axes describe the length and width of an ellipse fitted to the region. Their ratio is elongation. Solidity compares a region's area with the area it would cover if you stretched a tight rubber band around it.
+**A small convolutional neural network (CNN)** looks at the images directly instead of at my hand-picked measurements. A CNN slides small filters across an image to detect edges and shapes, then stacks those into higher-level patterns. I built mine with PyTorch, an open-source library for building and training neural networks. Mine took whole-well images, contrast-scaled separately and resized to 96 × 128 pixels. It started from random weights in each cross-validation fold and trained for 16 epochs, where one epoch is one full pass through the training images, running on a regular computer processor, no special graphics card needed. It has 5,177 parameters, which are the adjustable numbers it learns. For perspective, that is tiny, since modern image models have millions or billions.
 
-The script takes the median of each measurement across regions in a well and keeps a region count. For fluorescence, it first calculates mean intensity within each region and then takes the median across regions. One region can come from part of a worm or a group of touching worms. In each feature plot, the height of a curve tells you what fraction of wells are at or below a value.
+## How I tested honestly
 
-1. What does higher elongation mean?
-2. Why use a median instead of a mean to describe a typical region?
-3. How can two worms end up in one region?
+To avoid fooling myself, I used cross-validation, where the data is split into several chunks and each chunk takes a turn as the test set while the model trains on the rest. I split by well, so the model is never tested on a well it already saw. I ran the experiments with fixed random seeds, meaning the random choices are repeated the same way so someone else can reproduce my numbers. I report results as mean ± standard deviation across 15 folds from three seeded repeats, so you can see how much the numbers wobble rather than just one best case.
 
-## 5. Train the models that use measurements
+## How well segmentation worked
 
-`04_classify.py` uses `evaluation.py` to train and test scikit-learn logistic regression and a random forest. Logistic regression learns weights for the nine measurements and combines them into a treatment score. The random forest learns 150 decision trees from the same measurements. Both predict whether a well got ampicillin.
+Segmentation means having the computer draw an outline around each worm. I scored my outlines against the human-corrected masks using pixel-overlap measures, Dice and IoU, both of which run from 0 (no overlap) to 1 (perfect match). My overlay figures color the overlap, the extra pixels I included by mistake, and the pixels I missed.
 
-In each fold, the models learn from 80 wells and are tested on the other 20. The analysis runs five folds three times, using new groupings for each repeat. Accuracy is the fraction of correct calls. Balanced accuracy gives equal weight to both groups. ROC AUC describes how well the model ranks treated wells above untreated wells. A confusion matrix shows which calls were right and which group the mistakes came from.
+[Fill in from your results: mean Dice ___, mean IoU ___, and what the worst examples looked like.]
 
-Both feature models reached 100% accuracy on this plate. Then a model using only brightness and pixel variation outside the wells reached 95%. That result makes it harder to tell how much of the high accuracy comes from the worms. The script also shuffles one feature at a time within the test wells to see how much ROC AUC drops. The largest drops were small, partly because related features can carry similar information.
+I also want to be careful about the published benchmark. The published worm-by-worm segmentation scores use a different measure than my pixel-overlap scores, so I can't claim my numbers are better or worse than theirs.
 
-1. Why should both pictures from a well stay together when splitting the data?
-2. What did the outside-well test reveal?
-3. How does shuffling a feature help you check its importance?
+## What happened when I scrambled the labels
 
-## 6. Train a small network that sees pictures
+Real biology has messy labels, so I flipped 0%, 10%, 20% and 30% of the training labels on purpose and measured accuracy on the unchanged test labels. Both the logistic regression and the CNN lost accuracy as more labels were flipped. At 20% flipped, logistic regression scored 97.0% ± 4.6 percentage points and the CNN scored 96.7% ± 4.5. At 30%, logistic regression dropped to 91.3% ± 8.1 while the CNN held at 95.7% ± 5.0, so in this experiment the CNN handled the most label damage better. A percentage point (pp) is just one point on a 100-point scale, so "± 8.1 pp" is a fairly wide wobble.
 
-`05_cnn.py` trains the PyTorch CNN in `small_cnn.py`. It receives two resized images per well. Its filters learn patterns in small groups of pixels, and the network combines those patterns into a treatment score. It trains for 16 passes through the training data, starting with random weights in every fold. The CNN reached 99.3% accuracy on the same test wells as the feature models.
+[Fill in: accuracy at 0% and 10% flipped, and the random forest result.]
 
-1. What goes into the CNN, and what does it predict?
-2. Why compare the models using the same splits?
-3. What could you learn by testing the models on a new plate?
+This test shows how the models cope with mistakes in my training table. It does not tell me the real mix of live and dead worms in each well, which is still unknown.
 
-## 7. Try training with some wrong labels
+## What I can honestly conclude
 
-`06_noise.py` changes the treatment labels on 0%, 10%, 20% or 30% of the training wells. Logistic regression and the CNN receive the same changes, and the test labels stay fixed. With 30% flipped, logistic regression reached 91.3% and the CNN reached 95.7%. The experiment shows how the models react when the training table has mistakes. It leaves open how many live or dead worms are actually in each well.
+First, these models separated the two treatment groups on this one plate. But the near-perfect scores should make me more suspicious, not more excited. The background check and the column layout both suggest a model could be partly picking up on plate effects, like lighting or position, instead of worm biology. For that reason I count an independent plate as essential for finding out how well any of this generalizes. As a background test, I counted how many corrected masks mark worm pixels in the 64-pixel strips along the left and right edges, which are the regions used to test whether models were reading the background. [Fill in your count.]
 
-1. Which labels were flipped?
-2. Why keep the test labels fixed?
-3. How is a flipped label different from a treated well containing some dead worms?
+Second, the data support predicting treatment at the level of whole wells, not the health of individual worms.
 
-## 8. Explain the result in your own words
+Third, the masks affect what the feature models can even see. Worms near the rim can go missing, and touching worms can merge into one region, which changes every measurement downstream.
 
-The README has the full results and the commands to rerun them. The application notes offer ways to describe the project. Try explaining the outside-well result before talking about the 100% accuracy. It matters because the models could find a treatment signal even in parts of the pictures without marked worms.
+## What I'd do next
 
-1. What exactly did the classifiers predict?
-2. What makes it hard to know if they would work on another plate?
-3. Which result would you mention alongside the 100% accuracy?
+The most useful next step is testing on a different plate, ideally one with per-worm live/dead labels, so I can see whether any of this holds outside one plate's quirks. After that, I'd like to try tracking movement across a series of images, since curvature alone is only one moment in time. I'd also want to check whether the models are leaning on background brightness instead of the worms.
 
-## Answer key
+## How to reproduce it
 
-| Step | 1 | 2 | 3 |
-| --- | --- | --- | --- |
-| 0 | A snapshot of the staged files. | The script can download the large data files when needed. | The commit is sent to the remote repository. |
-| 1 | The two A13 TIFFs and `A13_binary.png`. Column 13 is untreated. | The TIFF acquisition tags identify TRITC and transmitted light. The well ID pairs the files. | It tells you which treatment the well got. The worm's viability is unknown. |
-| 2 | Seeing the images helps identify visible patterns and problems before choosing measurements. | Many treated outlines curve, and many untreated outlines look like rods. | Images of the same well captured at different times. |
-| 3 | It helps account for uneven lighting. | Predicted foreground pixels and the corrected foreground pixels. | The paper checked individual worms after separating touching worms. |
-| 4 | The region is longer relative to its width. | An unusually large or small value has less influence. | Touching or overlapping pixels can connect the worms. |
-| 5 | It keeps the model from seeing a second view of a test well during training. | Background brightness or variation carries information about the group. | A drop in AUC shows how much the score depended on that measurement in this test. |
-| 6 | Brightfield and TRITC images go in. A treatment score for the well comes out. | It gives every model the same test cases. | Whether the results carry over to an independent set of wells and imaging conditions. |
-| 7 | Only the treatment labels in the training fold. | It gives each experiment the same target to score against. | A flip deliberately changes the recorded treatment. A treated well can contain dead worms even when its treatment label is correct. |
-| 8 | Whether each well got ampicillin. | There is just one plate, and treatment follows column position. | The model trained on outside-well pixels reached 95%. |
+Everything runs from the project folder with pinned dependencies and fixed seeds. I ran it with Python 3.14.5 on an Apple Silicon Mac, so other computers may give slightly different numbers. The scripts print results as they run. Labels are in data/labels.csv, score tables are in outputs/, and plots are in outputs/figures/.
+
+## Words I used, in one place
+
+- **Segmentation:** outlining the objects of interest in an image.
+- **Feature:** a measurement taken from an image, like area or elongation.
+- **Dice / IoU:** overlap scores between my outline and the human outline.
+- **Logistic regression, random forest:** classic models that predict a category from measurements.
+- **CNN (convolutional neural network):** a model that learns patterns directly from pixels.
+- **PyTorch:** a Python library for building and training neural networks.
+- **scikit-learn:** a Python library of standard machine-learning tools.
+- **Epoch, parameter:** one full pass through the training data; one adjustable number inside a model.
+- **Cross-validation:** repeatedly splitting data into training and test sets to check a model fairly.
+- **Seed:** a fixed starting point for random choices so results can be repeated.
+- **Label noise:** wrong labels in the training data.
+- **TRITC:** a red fluorescent dye channel used in microscopy.
+- **CC0:** a license that lets anyone freely use the data.
