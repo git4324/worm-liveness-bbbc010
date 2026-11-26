@@ -59,4 +59,3 @@ def save_scores(rows, stem):
     print(summary.round(3).to_string())
     print("Confusion totals (each well appears once per repeat):")
     print(grouped[["tn", "fp", "fn", "tp"]].sum().to_string())
-

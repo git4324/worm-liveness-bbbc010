@@ -57,4 +57,3 @@ def predict(pixels, train, test, train_targets, seed):
     net.eval()
     with torch.no_grad():
         return net(pixels[test]).squeeze(1).sigmoid().numpy()
-

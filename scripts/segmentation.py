@@ -22,4 +22,3 @@ def overlap(predicted, reference):
     union = (predicted | reference).sum()
     total = predicted.sum() + reference.sum()
     return 2 * shared / total if total else 1.0, shared / union if union else 1.0
-
