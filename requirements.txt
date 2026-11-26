@@ -1,0 +1,8 @@
+numpy
+scipy
+pandas
+matplotlib
+scikit-image
+tifffile
+scikit-learn
+requests
